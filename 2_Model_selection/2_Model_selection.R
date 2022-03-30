@@ -30,78 +30,49 @@
 
 ##SET-UP####
 rm(list = ls())
-pacman::p_load(tidyverse, lubridate,PerformanceAnalytics, glmnet)
+pacman::p_load(tidyverse, lubridate,PerformanceAnalytics, glmnet, broom)
 
 ##1. SUBSET COLLATED DATA FOR MODELS####
 
 #read in collated data frame
-obs <- read_csv("./1_Data_wrangling/collated_obs_data.csv") %>%
-  filter(!year(Date) == 2021)
+obs <- read_csv("./1_Data_wrangling/collated_obs_data.csv") 
 colnames(obs)
 
 #check for skewness and log-transform if needed
+
 for(i in 2:ncol(obs)){
   if(abs(skewness(obs[,i],na.rm = TRUE)) > abs(skewness(log(obs[,i]+0.0001),na.rm = TRUE))){
     obs[,i] <- log(obs[,i]+0.0001)
   }
 }
 
-#a. Input: met, water temp, inflow, CTD @ depth of EXO sonde
-a <- obs[complete.cases(obs[ ,c(1,20:25,19,26,3,8,11,14,17)]), c(1,20:25,19,26,3,8,11,14,17)]
+obs <- obs %>% filter(year(Date) %in% c(2018:2020))
 
-#b. Input: met, water temp, inflow, CTD @ depth of EXO sonde, 0.5 m above, and 0.5 m
-#   below
-b <- obs[complete.cases(obs[ ,c(1,20:25,19,26,2:4,8,11,14,17)]), c(1,20:25,19,26,3,8,11,14,17)]
+#a. Input: met, water temp, inflow
+a <- obs[complete.cases(obs[ ,c(1,20:25,19,26,8,11,14,17)]), c(1,20:25,19,26,8,11,14,17)]
 
-#c. Input: met, water temp, inflow, EXO chl-a
-c <- obs[complete.cases(obs[ ,c(1,20:25,19,26,5,8,11,14,17)]), c(1,20:25,19,26,5,8,11,14,17)]
+#b. Input: met, water temp, inflow, FP data at 0.5 m above and below the EXO sonde
+b <- obs[complete.cases(obs[ ,c(1,20:25,19,26,7,9,10,12,13,15,16,18,8,11,14,17)]), c(1,20:25,19,26,7,9,10,12,13,15,16,18,8,11,14,17)]
 
-#d. Input: met, water temp, inflow, EXO chl-a and EXO phyco
-d <- obs[complete.cases(obs[ ,c(1,20:25,19,26,5:6,8,11,14,17)]), c(1,20:25,19,26,5:6,8,11,14,17)]
+#c. Input: met, water temp, inflow, EXO chl-a and EXO phyco
+c <- obs[complete.cases(obs[ ,c(1,20:25,19,26,5:6,8,11,14,17)]), c(1,20:25,19,26,5:6,8,11,14,17)]
 
-#e. Input: met, water temp, inflow, FP data at 0.5 m above and below the EXO sonde
-e <- obs[complete.cases(obs[ ,c(1,20:25,19,26,7,9,10,12,13,15,16,18,8,11,14,17)]), c(1,20:25,19,26,7,9,10,12,13,15,16,18,8,11,14,17)]
+#d. Input: met, water temp, inflow, EXO chl-a and EXO phyco, FP data at 0.5 m above 
+#   and below the EXO sonde
+d <- obs[complete.cases(obs[ ,c(1,20:25,19,26,5:6,7,9,10,12,13,15,16,18,8,11,14,17)]), c(1,20:25,19,26,5:6,7,9,10,12,13,15,16,18,8,11,14,17)]
 
-#f. Input: met, water temp, inflow, CTD @ depth of EXO sonde, EXO chl-a
-f <- obs[complete.cases(obs[ ,c(1,20:25,19,26,3,5,8,11,14,17)]), c(1,20:25,19,26,3,5,8,11,14,17)]
+#e. Input: met, water temp, inflow, EXO chl-a and EXO phyco, CTD @ depth of EXO sonde
+e <- obs[complete.cases(obs[ ,c(1,20:25,19,26,3,5:6,8,11,14,17)]), c(1,20:25,19,26,3,5:6,8,11,14,17)]
+
+#f. Input: met, water temp, inflow, EXO chl-a and EXO phyco, CTD @ depth of EXO sonde,
+#   0.5 m above, and 0.5 m below
+f <- obs[complete.cases(obs[ ,c(1,20:25,19,26,2:4,5:6,8,11,14,17)]), c(1,20:25,19,26,2:4,5:6,8,11,14,17)]
 
 #g. Input: met, water temp, inflow, CTD @ depth of EXO sonde, 0.5 m above, and 0.5 m
-#   below, EXO chl-a
-g <- obs[complete.cases(obs[ ,c(1,20:25,19,26,2:4,5,8,11,14,17)]), c(1,20:25,19,26,2:4,5,8,11,14,17)]
-
-#h. Input: met, water temp, inflow, CTD @ depth of EXO sonde, 0.5 m above, and 0.5 m
-#   below, EXO phyco
-h <- obs[complete.cases(obs[ ,c(1,20:25,19,26,2:4,6,8,11,14,17)]), c(1,20:25,19,26,2:4,6,8,11,14,17)]
-
-#i. Input: met, water temp, inflow, CTD @ depth of EXO sonde, 0.5 m above, and 0.5 m
-#   below, EXO chl-a and EXO phyco
-ii <- obs[complete.cases(obs[ ,c(1,20:25,19,26,2:4,5:6,8,11,14,17)]), c(1,20:25,19,26,2:4,5:6,8,11,14,17)]
-
-#j. Input: met, water temp, inflow, CTD @ depth of EXO sonde, FP data at 0.5 m above
-#   and below the EXO sonde
-j <- obs[complete.cases(obs[ ,c(1,20:25,19,26,3,7,9,10,12,13,15,16,18,8,11,14,17)]), c(1,20:25,19,26,3,7,9,10,12,13,15,16,18,8,11,14,17)]
-
-#k. Input: met, water temp, inflow, CTD @ depth of EXO sonde, 0.5 m above, and 0.5 m
-#   below, FP data at 0.5 m above and below the EXO sonde
-k <- obs[complete.cases(obs[ ,c(1,20:25,19,26,2:4,7,9,10,12,13,15,16,18,8,11,14,17)]), c(1,20:25,19,26,2:4,7,9,10,12,13,15,16,18,8,11,14,17)]
-
-#l. Input: met, water temp, inflow, EXO chl-a, FP data at 0.5 m above and below the 
-#   EXO sonde
-l <- obs[complete.cases(obs[ ,c(1,20:25,19,26,5,7,9,10,12,13,15,16,18,8,11,14,17)]), c(1,20:25,19,26,5,7,9,10,12,13,15,16,18,8,11,14,17)]
-
-#m Input: met, water temp, inflow, EXO phyco, FP data at 0.5 m above and below the 
-#   EXO sonde
-m <- obs[complete.cases(obs[ ,c(1,20:25,19,26,6,7,9,10,12,13,15,16,18,8,11,14,17)]), c(1,20:25,19,26,6,7,9,10,12,13,15,16,18,8,11,14,17)]
-
-#n. Input: met, water temp, inflow, EXO chl-a and EXO phyco, FP data at 0.5 m above 
-#   and below the EXO sonde
-n <- obs[complete.cases(obs[ ,c(1,20:25,19,26,5:6,7,9,10,12,13,15,16,18,8,11,14,17)]), c(1,20:25,19,26,5:6,7,9,10,12,13,15,16,18,8,11,14,17)]
-
-#o. Input: met, water temp, inflow, CTD @ depth of EXO sonde, 0.5 m above, and 0.5 m
 #   below, EXO chl-a and EXO phyco, FP data at 0.5 m above and below the EXO sonde
-o <- obs[complete.cases(obs[ ,c(1,20:25,19,26,2:4,5:6,7,9,10,12,13,15,16,18,8,11,14,17)]), c(1,20:25,19,26,2:4,5:6,7,9,10,12,13,15,16,18,8,11,14,17)]
+g <- obs[complete.cases(obs[ ,c(1,20:25,19,26,2:4,5:6,7,9,10,12,13,15,16,18,8,11,14,17)]), c(1,20:25,19,26,2:4,5:6,7,9,10,12,13,15,16,18,8,11,14,17)]
 
-combns <- list(a=a, b=b, c=c, d=d, e=e, f=f, g=g, h=h, ii=ii, j=j, k=k, l=l, m=m, n=n, o=o)
+combns <- list(a=a, b=b, c=c, d=d, e=e, f=f, g=g)
 combns_x <- list()
 combns_y <- list()
 
@@ -164,8 +135,8 @@ for (i in 1:length(combns)){
   
 }
   
-#b. based on results here, I think probably safe to go with lasso in all cases
-
+#b. based on results here, I think safe to go with lasso in all cases
+sink(file = file.path("./2_Model_Selection/Model_selection_output.txt"))
 for (i in 1:length(combns)){
   
   #subset x and y variables
@@ -177,28 +148,44 @@ for (i in 1:length(combns)){
   
   # The numbers at the top of the plot just refer to the number of variables in the model.
   # The first and second vertical dashed lines represent the λ value with the minimum MSE and the largest λ value within one standard error of the minimum MSE.
+  png(file=file.path("2_Model_selection/plots/",paste("Scenario",paste0(i,'.png'), sep = '_')))
   plot(fit)
+  dev.off()
   
-  fit1 <- glmnet(x, y, family = "mgaussian", alpha = 1)
-  plot(fit1, xvar = "lambda")
-  
-  min(fit$cvm)       # minimum MSE
-  fit$lambda.min     # lambda for this min MSE
+  # fit1 <- glmnet(x, y, family = "mgaussian", alpha = 1)
+  # plot(fit1, xvar = "lambda")
+  print(paste("Scenario",i,sep = " "))
+  print(paste("minimum MSE",min(fit$cvm),sep = " "))       # minimum MSE
+  print(paste("lambda at min MSE",fit$lambda.min,sep = " "))     # lambda for this min MSE
 
-  fit$cvm[fit$lambda == fit$lambda.1se]  # 1 st.error of min MSE
-  fit$lambda.1se  # lambda for this MSE
+  print(paste("1 st error of min MSE",fit$cvm[fit$lambda == fit$lambda.1se],sep = " "))  # 1 st.error of min MSE
+  print(paste("lambda for 1 st error of min MSE",fit$lambda.1se,sep = " "))  # lambda for this MSE
   
-  # NEED TO EDIT THIS B/C RESPONSE IS MULTIVARIATE
-  # coef(fit, s = "lambda.1se") %>%
-  #   tidy() %>%
-  #   filter(row != "(Intercept)") %>%
-  #   ggplot(aes(value, reorder(row, value), color = value > 0)) +
-  #   geom_point(show.legend = FALSE) +
-  #   ggtitle("Influential variables") +
-  #   xlab("Coefficient") +
-  #   ylab(NULL)
+  #plot coefficient values of vars that are kept
+  for (k in 1:4){ #because there are four PFGs
+    
+    PFG.coefs <- coef(fit, s= "lambda.min")[[k]]
+    
+    PFGs <- c("GreenAlgae","Bluegreens","BrownAlgae","MixedAlgae")
+    
+    png(file=file.path("2_Model_selection/plots/",paste("Scenario",paste0(i,"_",PFGs[k],'.png'), sep = '_')))
+    print(PFG.coefs %>%
+      tidy() %>%
+      filter(row != "(Intercept)") %>%
+      ggplot(aes(value, reorder(row, value), color = value > 0)) +
+      geom_point(show.legend = FALSE) +
+      ggtitle("Influential variables") +
+      xlab("Coefficient") +
+      ylab(NULL))
+    dev.off()
+    
+    print(PFGs[k])
+    print(paste("Nonsig vars:",names(PFG.coefs[which(PFG.coefs[,1]==0),]),sep = " "))
+    
+  }
 
 }
+sink()
 
 # NEXT STEPS (28MAR22):
 
@@ -206,10 +193,16 @@ for (i in 1:length(combns)){
 #   does this still seem reasonable after a night's sleep?
 
 # Specifically:
-# a. the different combinations of data we are using (a-o)
-# b. fitting ecah of these combinations and continuing with them rather than using
-# elastic net to fit a single model using all possible data
-# c. decision to use lasso for all final model fitting based on elastic net results
+# a. the different combinations of data we are using (a-o) - RE-EVALUATED; SEE COPIOUS
+#    NOTES IN NOTEBOOK FROM 29MAR22; DECIDED TO GO WITH NEW SCENARIOS A-G BASED ON 
+#    WHAT WE WOULD REALLY DO IF WE WERE TRYING TO DO THIS WELL AS OPPOSED TO SATISFYING
+#    SOME OBSCURE NOTION OF EXAMINING ALL POSSIBLE OPTIONS, INCLUDING ONES THAT MAKE
+#    VERY LITTLE SENSE
+# b. fitting each of these combinations and continuing with them rather than using
+#    elastic net to fit a single model using all possible data - YUP; ILLUSTRATES VALUE
+#    OF ADDITIONAL SENSORS AND ALLOWS FOR SEQUENTIAL BUILDING OF RESULTS
+# c. decision to use lasso for all final model fitting based on elastic net results - YUP;
+#    WITH NEW SCENARIOS IT IS QUITE CLEAR THAT LASSO IS THE BEST OPTION
 
 #2. Pull info and write visualizations:
 
