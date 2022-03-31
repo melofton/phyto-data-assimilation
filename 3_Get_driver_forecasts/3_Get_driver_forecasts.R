@@ -37,9 +37,6 @@ source("./0_Function_library/format_noaa_forecast.R")
 #set series of dates over which you want to retrieve forecasts
 model_dates = seq.Date(from = as.Date("2021-01-21"), to = as.Date("2021-12-31"), by = "days")
 
-#create vector for list of dates missing forecasts
-missing_dates <- c()
-
 for (i in seq_along(model_dates)){
   
   #assign bucket prefix for each date
