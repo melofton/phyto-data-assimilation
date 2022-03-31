@@ -1,0 +1,478 @@
+---
+title: "A tutorial for the Ensemble Kalman Filter (EnKF)"
+author: "Quinn Thomas"
+date: "6/3/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+A tutorial/example on the Ensemble Kalman Filter (EnKF) that is used in FLARE (Forecasting Lake and Reservior Ecosystems) System
+
+The classic reference:
+
+Evensen, G. (2009). Data Assimilation. Berlin, Heidelberg, Springer Berlin Heidelberg.
+
+A good limnology example:
+
+Zwart, J. A., et al. (2019). "Improving estimates and forecasts of lake carbon dynamics using data assimilation." Limnology and Oceanography-Methods 17(2): 97-111.
+	
+# Step 0: Load packages
+
+You will be using the multi-variate normal distribution.  It is not included in the base R statistical package so we need to load a package
+
+```{r}
+library(mvtnorm)
+```
+
+# Step 1: Set up
+
+Set the number of ensembles and the number of depths that we are modeling.  Here we are modeling 3 depths with 10 ensemble members.  Note: `ndepths` in th FLARE code is `nstates` 
+
+```{r}
+nmembers <- 10
+ndepths <- 3
+```
+
+We have to have a process uncertainty covariance matrix already calculated.  Each row is the the residual for predictions from a day and each column is a depth.  So this matrix is the residuals for the previous 4 days.  I just made up numbers here.  Sigma is the covariance matrix that we will use later. Note: `sigma` in the FLARE code is `qt` and `residual_matrix` in the FLARE code is `resid30day`
+
+```{r}
+#Create the process uncertainty matrix
+residual_matrix <- matrix(NA, nrow = 4, ncol = ndepths)
+residual_matrix[1,] <- c(0.5, 0.3, 0.01)
+residual_matrix[2,] <- c(1, 0.2, 0.02)
+residual_matrix[3,] <- c(0.25, 0.1, 0.03)
+residual_matrix[4,] <- c(-0.30, -0.1, -0.03)
+
+sigma <- cov(residual_matrix)
+sigma
+```
+
+This is a 3 x 3 matrix (ndepths x ndepths)
+
+# Step 2: Organize and process observations
+
+First we will create fake data for the specific "day" that we are modeling (in practice this step involves indexing the correct observations)  Importantly, we only have observations for 2 of the 3 depths (surface and deep depths).  Note: `y` in the FLARE code is `z_t` and `y_depths` in the FLARE code is `z_states_t`
+
+```{r}
+y <- matrix(NA, ncol= 1, nrow = 2)
+y[1] <- 25 #Observed surface temperature
+y[2] <- 11 #Observed deep temperature
+
+y_depths <- matrix(NA, ncol= 1, nrow = 2)
+y_depths[1] <- 1 #1st depth has observation
+y_depths[2] <- 3 #3rd depth has observation
+
+y
+y_depths
+```
+
+Now create a matrix that assigns each observation to the corresponding modeled depth.  We are assigning a value of 1 the model depth that the observation is assigned to.  Note: `h_matrix` in FLARE is just `h`
+
+```{r}
+h_matrix <- matrix(0, nrow = 2, ncol = ndepths)
+h_matrix[1, y_depths[1]] <- 1
+h_matrix[2, y_depths[2]] <- 1
+h_matrix
+```
+
+Our observations also have uncertainty that we can represent with a variance (or standard deviation).  We are assuming that the observation uncertainty is the same across depths and it not correlated among depths, hence the initialization of the matrix with zeros and only assigning values to [1,1] and [2,2].  Note: R_matrix in the FLARE code is `psi_t`
+
+```{r}
+#Create observation uncertainty
+observation_uncertainty <- 0.001
+
+R_matrix <- matrix(0, nrow = 2, ncol = 2)
+R_matrix[1,1] <- observation_uncertainty
+R_matrix[2,2] <- observation_uncertainty
+R_matrix
+```
+
+
+# Step 3: Make prediction with our model
+
+We are going to make predictions.  For this example we will assume that all the ensembles make the same prediction
+
+```{r}
+#Build model predictions for each ensemble
+x_star <- matrix(NA, nrow = nmembers, ncol = ndepths)
+
+for(m in 1:nmembers){
+  x_star[m, ] <- c(30,17,8)
+}
+x_star
+```
+
+# Step 4: Add process uncertainty to the model predictions
+
+Each ensemble has random noise added using the covariance matrix that we calculated in Step 0
+
+```{r}
+x_corr <- matrix(NA, nrow = nmembers, ncol = ndepths)
+for(m in 1:nmembers){
+  x_corr[m, ] <- x_star[m, ] + rmvnorm(1, rep(0,ndepths) , sigma)
+}
+x_corr
+```
+
+# Step 5: Calculate the covariance among model predictions
+
+We first need to calculate the mean across ensembles for each modeled depth
+
+```{r}
+#Calcule the mean  for each depth across ensembles
+ens_mean <- colMeans(x_corr)
+ens_mean
+```
+
+Then we need to loop through the ensembles to calculate the covariance.  The `p_it` is the sum of the variances and covariances across all ensemble members
+
+The `%*%` symbol tells R to multiply the two matrices using matrix algebra
+
+The `t()` is the transpose of the matrix
+
+```{r}
+dit <- matrix(NA, nrow = nmembers, ncol = ndepths)
+#Loop through ensemble members
+for(m in 1:nmembers){  
+  #Ensemble specific deviation
+  dit[m, ] <- x_corr[m, ] - ens_mean
+  
+  #if the first ensemble then create the matrix that is then averaged
+  if(m == 1){
+    p_it <- dit[m, ] %*% t(dit[m, ]) 
+  }else{
+    #if not the first ensemble then add the matrix to the previous matrix
+    p_it <- dit[m, ] %*% t(dit[m, ]) +  p_it 
+  }
+}
+```
+
+Finally we need to divide by the number of ensembles to get the average variance/covariance: Note Cxx_matrix in the FLARE code is `p_t`
+
+```{r}
+Cxx_matrix <- p_it / (nmembers - 1)
+Cxx_matrix
+```
+
+# Step 6: Add noise to the observations
+
+Create a random set of observations for each ensemble member that represents observation uncertainty.  Note: y_corr in the FLARE code is `n_psi`
+
+```{r}
+y_corr <- matrix(NA, nrow =  nmembers, ncol = length(y))
+for(m in 1:nmembers){
+  y_corr[m, ] <- y + t(rmvnorm(n = 1, mean = c(0, 0), sigma = R_matrix))
+}
+y_corr
+```
+
+# Step 7: Calculate the Kalman gain
+
+The `solve()` function is the inverse of the matrix.
+
+```{r}
+K <- Cxx_matrix %*% t(h_matrix) %*% solve(h_matrix %*% Cxx_matrix %*% t(h_matrix) + R_matrix)
+round(K,4)
+```
+
+**For the observed depths:**
+
+The value in the `[1,1]` cell is the proportion of difference between the observation and model at the surface that is updated using the surface observation
+
+The value in the `[1,2]` cell is the proportion of difference between the observation and model at the surface that is updated using the deep observation.  This is much smaller than `[1,1]` because the deep depth is not strongly related to the surface depth in the model
+
+The value in the `[3,1]` cell is the proportion of difference between the observation and model at the deep layer that is updated using the surface observation
+
+The value in the `[3,2]` cell is the proportion of difference between the observation and model at the deep layer that is updated using the deep observation.
+
+**For the unobserved depths:**
+
+The value in the `[2,1]` cell is the proportion of difference between the observation and model at the surface that is used to update the mid-depth.  For example if the difference at the surface is 1 degree C and the value of [2,1] is 0.3, then it will update the mid-depth by 0.3 &deg;C
+
+The value in the `[1,2]` cell is the proportion of difference between the observation and model at deep layer that is used to update the mid-depth.  
+
+Overall the unobserved mid-layer update is the sum of the update from the surface and deep layers.
+
+# Step 8: Update the model states
+
+Here is an example of how the Kalman gain is used to update the model states for the first ensemble member.  It uses the deviation from the observations and the Kalman gain.  Here is an example for the 1st ensemble member:
+
+
+
+Recall that the observations were
+
+```{r}
+y_corr[1,]
+```
+
+and the model prediction at the observed depths were
+
+```{r}
+h_matrix %*% x_corr[1,]
+```
+
+Subtracting the predictions from the observations gives a 2 x 1 matrix.  
+```{r}
+(y_corr[1,] - h_matrix %*% x_corr[1,])
+```
+
+These are the differences for the observed depths, after accounting for observation uncertainty. The surface was predicted to be too hot and the deep layer was predicted to be too cold so the difference reflect that.  
+
+Multiplying these differences by the 3 x 3 Kalman gain matrix gives us the magnitude of updating that will occur for the observed and unobserved depths
+
+```{r}
+K %*% (y_corr[1,] - h_matrix %*% x_corr[1,])
+```
+
+The update matrix is added to the model predictions (with noise) to get the updated states
+
+```{r}
+x_corr[1,] + K %*% (y_corr[1,] - h_matrix %*% x_corr[1,])
+```
+
+
+And here is how all the ensemble members are updated.  Note: `x_update` in the FLARE code is `x`
+
+```{r}
+x_update <- matrix(NA, nrow = nmembers, ncol = ndepths)
+for(m in 1:nmembers){
+  x_update[m, ] <- x_corr[m,] + K %*% (y_corr[m,] - h_matrix %*% x_corr[m,])
+}
+x_update
+```
+
+# Step 9: All together as a function
+
+```{r}
+EnKF <- function(x, sigma, nmembers, ndepths, y, observation_uncertainty, y_depths){
+  
+  #Allocate matrices
+  h_matrix <- matrix(0, nrow = 2, ncol = ndepths)
+  R_matrix <- matrix(0, nrow = 2, ncol = 2)  
+  x_star <- matrix(NA, nrow = nmembers, ncol = ndepths)  
+  x_corr <- matrix(NA, nrow = nmembers, ncol = ndepths)
+  dit <- matrix(NA, nrow = nmembers, ncol = ndepths) 
+  y_corr <- matrix(NA, nrow =  nmembers, ncol = length(y))
+  x_update <- matrix(NA, nrow = nmembers, ncol = ndepths)
+  
+  #Make prediction
+  for(m in 1:nmembers){
+    #This just says that x is one degree warmer.  This is where GLM does all the work
+    x_star[m, ] <- x[m, ] + c(1, 1, 1)
+  }
+  
+  #Add noise
+  for(m in 1:nmembers){
+    x_corr[m, ] <- x_star[m, ] + rmvnorm(1, rep(0,ndepths) , sigma)
+  }
+  
+  #Only do EnKF if observations are present that day
+  #there has to be at least 1 non-NA observation.
+  if(length(which(!is.na(y))) > 0){
+    
+    #Assign observations to depths
+    h_matrix[1, y_depths[1]] <- 1
+    h_matrix[2, y_depths[2]] <- 1
+    
+    #Create observational uncertainty matrix
+    R_matrix[1,1] <- observation_uncertainty
+    R_matrix[2,2] <- observation_uncertainty
+    
+    #Calculate mean prediction for each depth
+    ens_mean <- colMeans(x_corr)
+    
+    #Loop through ensemble members
+    for(m in 1:nmembers){  
+      #Ensemble specific deviation
+      dit[m, ] <- x_corr[m, ] - ens_mean
+      
+      #if the first ensemble then create the matrix that is then averaged
+      if(m == 1){
+        p_it <- dit[m, ] %*% t(dit[m, ]) 
+      }else{
+        #if not the first ensemble then add the matrix to the previous matrix
+        p_it <- dit[m, ] %*% t(dit[m, ]) +  p_it 
+      }
+    }
+    
+    #Calculate Cxx matrix
+    Cxx_matrix <- p_it / (nmembers - 1)
+    
+    #Add noise to observations
+    for(m in 1:nmembers){
+      y_corr[m, ] <- y + t(rmvnorm(n = 1, mean = c(0, 0), sigma = R_matrix))
+    }
+    
+    #Calculate Kalman Gain
+    K <- Cxx_matrix %*% t(h_matrix) %*% solve(h_matrix %*% Cxx_matrix %*% t(h_matrix) + R_matrix)
+    
+    #Update model states based on Kalman Gain and devivations
+    for(m in 1:nmembers){
+      x_update[m, ] <- x_corr[m,] + K %*% (y_corr[m,] - h_matrix %*% x_corr[m,])
+    }
+  }else{
+    #Only add noise if observations are missing
+    x_update <- x_corr
+  }
+  return(x_update)
+}
+```
+
+For using the function, first set the initial conditions for the `x` matrix.  We are increasing the number of ensemble members
+
+```{r}
+ndays <- 10
+nmembers <- 50
+x <- array(NA, dim = c(ndays, nmembers, ndepths))
+
+for(m in 1:nmembers){
+  x[1, m, ] <- c(27,17,8)
+}
+```
+
+We also need observations for each day.  In this case the temperature is constant through time for each depth
+
+```{r}
+y <- array(NA, dim =c(ndays, 2))
+y[, 1] <- 25
+y[, 2] <- 11
+```
+
+Now we can use the function to run the EnKF for one day
+
+```{r}
+x[2, , ] <- EnKF(x = x[1, , ], 
+                 sigma = sigma, 
+                 nmembers = nmembers, 
+                 ndepths = ndepths, 
+                 y = y[2, ], 
+                 observation_uncertainty = observation_uncertainty, 
+                 y_depths= y_depths)
+```
+
+From here you can create a for-loop through the days to run the EnKF through time.
+
+```{r}
+for(i in 2:ndays){
+  x[i, , ] <- EnKF(x = x[i-1, , ], 
+                   sigma = sigma, 
+                   nmembers = nmembers, 
+                   ndepths = ndepths, 
+                   y = y[i, ], 
+                   observation_uncertainty = observation_uncertainty, 
+                   y_depths= y_depths)
+}
+```
+
+# Step 10: Analysis
+
+We will use the tidyverse and ggplot to make the figures. You can use base R plotting as well
+
+```{r results = FALSE}
+library(tidyverse)
+```
+
+To look at a plot of all the ensemble members overtime for a depth first organize the predictions and observations.  This is for tidyverse and ggplot users.
+
+```{r}
+make_plot <- function(x, y, focal_depth){
+  
+  ndays <- dim(x)[1]
+  
+  x_depth <- x[, , focal_depth]
+  sim_day <- seq(1, ndays, 1)
+  colnames(x_depth) <- paste0("Ens", seq(1, ncol(x_depth), 1))
+  d_tibble <- as_tibble(x_depth)
+  
+  d_tibble <- d_tibble %>% 
+    mutate(time = sim_day)
+  
+  model_temperature <- gather(d_tibble, key = "Ensemble", value = "temperature", -time)
+  
+  observed_temperature <- tibble(time = sim_day,
+                                 temperature = y[, 1])
+  ggplot() +
+    geom_line(data = model_temperature, aes(x = time, y = temperature, group = Ensemble)) + 
+    labs(x = "Day", y = expression(~degree~C), title = "Surface Temperature") +
+    theme_bw() +
+    geom_point(data = observed_temperature, aes(x = sim_day, y = y[, focal_depth]), col = "red")
+}
+
+```
+
+
+Make the plot
+
+```{r}
+make_plot(x,y, focal_depth = 1)
+```
+
+Not look at the distribution of temperature for a specific day
+
+```{r}
+focal_day <- 5
+focal_depth <- 1
+x_depth_day <- x[focal_day, , focal_depth]
+
+ggplot() +
+  geom_histogram(aes(x = x_depth_day), bins = 15) +
+  labs(x = "water temperature", title = "Histogram of ensemble members")
+```
+
+# Next Steps
+
+* What influence does increasing observation uncertainty have on the magnitude of state updating?
+
+```{r}
+#Muliplier for observation uncertainty
+obs_uncert_multiply <- 100
+
+#Run EnKF
+for(i in 2:ndays){
+  x[i, , ] <- EnKF(x = x[i-1, , ], 
+                   sigma = sigma, 
+                   nmembers = nmembers, 
+                   ndepths = ndepths, 
+                   y = y[i, ], 
+                   observation_uncertainty = observation_uncertainty*obs_uncert_multiply, 
+                   y_depths= y_depths)
+}
+
+make_plot(x,y, focal_depth = 1)
+
+```
+
+* What influence does missing data have on the filter process?
+
+```{r}
+#Add missing data to the fourth day
+y_missing <- y
+y_missing[4,] <- c(NA,NA)
+
+#Run EnKF
+for(i in 2:ndays){
+  x[i, , ] <- EnKF(x = x[i-1, , ], 
+                   sigma = sigma, 
+                   nmembers = nmembers, 
+                   ndepths = ndepths, 
+                   y = y_missing[i, ], 
+                   observation_uncertainty = observation_uncertainty, 
+                   y_depths= y_depths)
+}
+
+#Plot output
+make_plot(x,y_missing, focal_depth = 1)
+
+```
+
+* What influence does the number of ensemble members have on the filtering process?
+
+* What influence does the magnitude of process uncertainty have on the filtering process?
+
+
+
