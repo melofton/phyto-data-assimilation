@@ -25,6 +25,7 @@
 rm(list = ls())
 
 #load packages
+install.packages('pacman')
 pacman::p_load(tidyverse, lubridate, aws.s3, ncdf4)
 
 #set environment to retrieve from proper S3 bucket

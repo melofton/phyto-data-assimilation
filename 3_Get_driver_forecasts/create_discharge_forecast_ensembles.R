@@ -1,4 +1,25 @@
-
+#' Function to create inflow discharge ensemble forecast
+#' 
+#' @param full_time_day_local vector of dates over which you want to create discharge
+#' forecast ensembles; format is chr string in yyyy-mm-dd
+#' @param working_directory where forecast ensemble output is written
+#' @param input_file_tz time zone of the met file inputs (?) DON'T CHANGE THIS
+#' @param start_forecast_step should be set to 2 b/c the first day in the full_time_day_local
+#' vector is "today" so we want to start forecasts at second timestep
+#' @param inflow_file1 .csv file with time, FLOW, TEMP and time is the date in yyyy-mm-dd;
+#' FLOW is discharge in cms; TEMP is water temperature of inflow in C
+#' @param local_tzone is the same as input_file_tz
+#' @param met_file_names GLM compatible met files with columns and units accordingly; each
+#' file is the forecast from one NOAA ensemble member and you need a separate file for each 
+#' ensemble member/date combination that you want discharge forecasts for; what it 
+#' ultimately uses is AirTemp and Rain for linear model of discharge
+#' @param forecast_days number of days in the future that you want discharge forecasts for
+#' @param inflow_process_uncertainty TRUE or FALSE as to whether to include process
+#' uncertainty; the distribution for process uncertainty is specified w/in function
+#' 
+#' If need to look in more detail, run the automated forecast scripts (6) in order first
+#' to set everything up and then use the run_arima_any_timestep when you get to that script
+#' to step through the function
 
 create_discharge_forecast_ensembles <- function(full_time_day_local,
                                        working_directory,
