@@ -32,7 +32,21 @@ exo <- data.table::fread("./00_Data_files/FCR_Catwalk_2018_2021.csv", fill = TRU
   filter(year(Date) %in% c(2014:2021))%>%
   group_by(Date) %>%
   summarize(daily_EXOChla_ugL_1 = mean(EXOChla_ugL_1, na.rm = TRUE),
-            daily_EXOBGAPC_ugL_1 = mean(EXOBGAPC_ugL_1, na.rm = TRUE))
+            daily_EXOBGAPC_ugL_1 = mean(EXOBGAPC_ugL_1, na.rm = TRUE)) %>%
+  mutate(daily_EXOChla_ugL_1_lag1 = lag(daily_EXOChla_ugL_1, 1),
+         daily_EXOBGAPC_ugL_1_lag1 = lag(daily_EXOBGAPC_ugL_1, 1),
+         daily_EXOChla_ugL_1_lag2 = lag(daily_EXOChla_ugL_1, 2),
+         daily_EXOBGAPC_ugL_1_lag2 = lag(daily_EXOBGAPC_ugL_1, 2),
+         daily_EXOChla_ugL_1_lag3 = lag(daily_EXOChla_ugL_1, 3),
+         daily_EXOBGAPC_ugL_1_lag3 = lag(daily_EXOBGAPC_ugL_1, 3),
+         daily_EXOChla_ugL_1_lag4 = lag(daily_EXOChla_ugL_1, 4),
+         daily_EXOBGAPC_ugL_1_lag4 = lag(daily_EXOBGAPC_ugL_1, 4),
+         daily_EXOChla_ugL_1_lag5 = lag(daily_EXOChla_ugL_1, 5),
+         daily_EXOBGAPC_ugL_1_lag5 = lag(daily_EXOBGAPC_ugL_1, 5),
+         daily_EXOChla_ugL_1_lag6 = lag(daily_EXOChla_ugL_1, 6),
+         daily_EXOBGAPC_ugL_1_lag6 = lag(daily_EXOBGAPC_ugL_1, 6),
+         daily_EXOChla_ugL_1_lag7 = lag(daily_EXOChla_ugL_1, 7),
+         daily_EXOBGAPC_ugL_1_lag7 = lag(daily_EXOBGAPC_ugL_1, 7))
 
 ##CTD####
 # data <- "https://portal.edirepository.org/nis/dataviewer?packageid=edi.200.12&entityid=0a62d1946e8d9a511bc1404e69e59b8c"
@@ -68,8 +82,21 @@ for (i in 1:length(dates)){
 }
 
 ctd1 <- cbind(dates,temp) %>%
-  rename(Date = dates)
+  rename(Date = dates) %>%
+  arrange(Date) %>%
+  mutate(CTDChla_ugL_lag = lag(CTDChla_ugL,1),
+         CTDChla_ugL_above_lag = lag(CTDChla_ugL_above,1),
+         CTDChla_ugL_below_lag = lag(CTDChla_ugL_below,1)) 
 
+for(i in 2:length(ctd1$Date)){
+  if((length(seq.Date(from=ctd1$Date[i-1], to=ctd1$Date[i], by='day'))-1) > 7){
+    
+    ctd1$CTDChla_ugL_lag[i] <- NA
+    ctd1$CTDChla_ugL_above_lag[i] <- NA
+    ctd1$CTDChla_ugL_below_lag[i] <- NA
+    
+  }
+}
 ##FP####
 # data <- "https://portal.edirepository.org/nis/dataviewer?packageid=edi.272.6&entityid=6b3151c0fdd913e02641363c2b00ae57"
 # 
@@ -121,7 +148,28 @@ for (i in 1:length(dates)){
 }
 
 fp1 <- cbind(dates,temp) %>%
-  rename(Date = dates)
+  rename(Date = dates) %>%
+  arrange(Date) %>%
+  mutate(GreenAlgae_ugL_lag = lag(GreenAlgae_ugL,1),
+         GreenAlgae_ugL_above_lag = lag(GreenAlgae_ugL_above,1),
+         GreenAlgae_ugL_below_lag = lag(GreenAlgae_ugL_below,1),
+         Bluegreens_ugL_lag = lag(Bluegreens_ugL,1),
+         Bluegreens_ugL_above_lag = lag(Bluegreens_ugL_above,1),
+         Bluegreens_ugL_below_lag = lag(Bluegreens_ugL_below,1),
+         BrownAlgae_ugL_lag = lag(BrownAlgae_ugL,1),
+         BrownAlgae_ugL_above_lag = lag(BrownAlgae_ugL_above,1),
+         BrownAlgae_ugL_below_lag = lag(BrownAlgae_ugL_below,1),
+         MixedAlgae_ugL_lag = lag(MixedAlgae_ugL,1),
+         MixedAlgae_ugL_above_lag = lag(MixedAlgae_ugL_above,1),
+         MixedAlgae_ugL_below_lag = lag(MixedAlgae_ugL_below,1))
+
+for(i in 2:length(fp1$Date)){
+  if((length(seq.Date(from=fp1$Date[i-1], to=fp1$Date[i], by='day'))-1) > 7){
+    
+  fp1[i,c(14:25)] <- NA
+  
+  }
+}
 
 ##COMBINE DATA STREAMS####
 

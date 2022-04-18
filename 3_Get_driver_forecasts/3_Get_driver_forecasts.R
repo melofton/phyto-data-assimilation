@@ -26,7 +26,7 @@ rm(list = ls())
 
 #load packages
 #install.packages('pacman')
-pacman::p_load(tidyverse, lubridate, aws.s3, ncdf4)
+pacman::p_load(tidyverse, lubridate, aws.s3, ncdf4, ncdf4.helpers)
 
 #set environment to retrieve from proper S3 bucket
 Sys.setenv("AWS_DEFAULT_REGION" = "s3",
@@ -36,9 +36,18 @@ Sys.setenv("AWS_DEFAULT_REGION" = "s3",
 source("./0_Function_library/format_noaa_forecast.R")
 source("./0_Function_library/create_discharge_forecast_ensembles.R")
 
-#RETRIEVE AND FORMAT NOAA FORECASTS####
+#define simple functions
+split_params = function (x, sep, n) {
+  # Splits string into list of substrings separated by 'sep'.
+  # Returns nth substring.
+  x = strsplit(x, sep)[[1]][n]
+  
+  return(x)
+}
+
+#1. RETRIEVE AND FORMAT NOAA FORECASTS####
 #set series of dates over which you want to retrieve forecasts
-model_dates = seq.Date(from = as.Date("2021-01-21"), to = as.Date("2021-12-31"), by = "days")
+model_dates = seq.Date(from = as.Date("2021-01-01"), to = as.Date("2021-12-31"), by = "days")
 
 
 #NOTE to self (MEL): you are storing the .nc files of each ensemble member on your
@@ -79,8 +88,80 @@ for (i in seq_along(model_dates)){
 #placeholder - may decide to come back here and aggregate the daily files to one file
 
 #2. RETRIEVE AND FORMAT WATER TEMPERATURE FORECASTS####
+model_dates = seq.Date(from = as.Date("2021-01-01"), to = as.Date("2021-12-31"), by = "days")
 
-#Waiting for the team to find the 2021 FLARE water temperature forecasts at FCR.
+for (i in seq_along(model_dates)){
+  
+  tryCatch({ #because we know there are 4 days missing so this will bonk 4 times
+    
+  #create object key name within bucket
+  object = paste0("fcre/fcre-",model_dates[i],"-marylofton.nc")
+  
+  #create filename where object will be written locally
+  filename = paste0("C:/Users/Mary Lofton/Downloads/fcre-",model_dates[i],"-marylofton.nc")
+  
+  #retrieve object from bucket and write to file locally
+  save_object(
+    object = object,
+    bucket = "forecasts",
+    file = file.path(filename))
+  
+  #open nc file
+  nc <- nc_open(filename)
+  
+  #retrieve water temperature forecast
+  #the dim names of the temp variable are time, depth, ensemble (18,28,100)
+  #time includes yesterday, today, and 16 days into the future
+  #depth includes 28 depths for FCR, ~ every third of a meter
+  #there are 100 ensemble members
+  #we are indexing to retrieve the forecast starting from today (time dimension = 2),
+  #for a depth of 1.6 m (depth dimension = 6), for all ensemble members
+  #that's how we're getting to start = c(2,6,1) and count = c(-1,1,-1)
+  wt <- ncvar_get(nc, attributes(nc$var)$names[1], start = c(2,6,1), count = c(-1,1,-1))
+  
+  #retrieve and format forecast dates
+  t <- ncdf4::ncvar_get(nc,'time')
+  full_time <- as.POSIXct(t,
+                          origin = '1970-01-01 00:00.00 EST',
+                          tz = "UTC")
+  full_time_day <- lubridate::as_date(full_time)
+  
+  #format forecast output into long form to match other driver forecasts
+  fc <- data.frame(wt)
+  fc$fc_date <- full_time_day[2:18]
+  ens <- c(1:100)
+  colnames(fc)[1:100] <- paste0("ens_",ens)
+  
+  fc <- fc %>%
+    gather(ens_1:ens_100, key = "ensemble_member", value = "Temp_C") %>%
+    mutate(ensemble_member = sapply(
+      X = ensemble_member,
+      FUN = split_params,
+      sep = '_',
+      n = 2)) %>%
+    add_column(issue_date = model_dates[i])
+  fc <- fc[,c(4,1,2,3)]
+  
+  #write forecast to file
+  write.csv(fc, file = file.path(paste0("./00_Data_files/FLARE_forecasts/wt_",model_dates[i],".csv")),row.names = FALSE)
+  
+  #close nc file
+  ncdf4::nc_close(nc)
+  
+  #delete local nc file
+  file.remove(filename)
+  
+  }, error=function(e){cat("ERROR :",conditionMessage(e), "\n")}) #print error if occurs
+  
+} #end loop
+
+test <- read_csv("./00_Data_files/FLARE_forecasts/wt_2021-01-01.csv")
+#looks good
+
+check <- list.files("./00_Data_files/FLARE_forecasts/")
+#ha ok we are now down to 360 days...hmmm...ok whatever I am not too concerned
+#we can circle back to this once we are writing it all up if that happens
+
 
 #3. USE NOAA FORECASTS TO CREATE DISCHARGE FORECASTS####
 
