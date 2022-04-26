@@ -2,4 +2,8 @@
 *
 # Except this file
 !.gitignore
-!2_Model_selection.R
+!2A_DA_model_selection.R
+!2B_Create_FP_data_product.R
+!2C_Forecast_model_selection.R
+!JAGS_functions/
+!JAGS_models/

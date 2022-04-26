@@ -3,7 +3,7 @@
 #Date: 15APR22
 
 rm(list = ls())
-pacman::p_load(tidyverse, lubridate, PerformanceAnalytics)
+pacman::p_load(tidyverse, lubridate, mvtnorm)
 
 ##' retreive the model time steps based on start and stop dates and time step ----
 #'
@@ -17,15 +17,13 @@ get_model_dates = function(model_start, model_stop, time_step = 'days'){
   return(model_dates)
 }
 
-model_dates <- get_model_dates(model_start = "2021-01-01",
-                               model_stop = "2021-12-31",
-                               time_step = 'days')
+# model_dates <- get_model_dates(model_start = "2021-04-27",model_stop = "2021-11-09",time_step = 'days')
 
 ##' get observational data ----
 #' function to read in data 
 #'
 #' @param obs_file filepath and filename containing observational data
-#' @param assimilation_expt choose from c("FP","FP_EXO","FP_CTD","all");
+#' @param assimilation_expt choose from c("FP","FP_EXO_1","FP_EXO_2","FP_CTD","all");
 #' determines which data streams to include
 #' @param missing_data_expt choose from TRUE or FALSE; determines whether or
 #' not to drop every other FP observation
@@ -36,28 +34,29 @@ get_obs_df <- function(obs_file = "./1_Data_wrangling/collated_obs_data.csv",
   
   obs <- read_csv(obs_file) 
   
-  #check for skewness and log-transform if needed
-  for(i in 2:ncol(obs)){
-    if(abs(skewness(obs[,i],na.rm = TRUE)) > abs(skewness(log(obs[,i]+0.0001),na.rm = TRUE))){
-      obs[,i] <- log(obs[,i]+0.0001)
-    }
-  }
-  
   obs <- obs %>% 
     filter(year(Date) %in% c(2021)) %>%
     rename(datetime = Date)
   obs <- obs[,c(1,25,28,31,34,8,9,2:4)]
   
+  for(i in 2:ncol(obs)){
+    obs[,i] <- log(obs[,i]+0.0001)
+  }
+  
   if(assimilation_expt == "FP"){
     obs[,c("daily_EXOChla_ugL_1", "daily_EXOBGAPC_ugL_1", "CTDChla_ugL_above", "CTDChla_ugL", "CTDChla_ugL_below")] <- NA
   }
   
-  if(assimilation_expt == "FP_EXO"){
-    obs[,c("daily_EXOChla_ugL_1", "daily_EXOBGAPC_ugL_1")] <- NA
+  if(assimilation_expt == "FP_EXO_1"){
+    obs[,c("CTDChla_ugL_above", "CTDChla_ugL", "CTDChla_ugL_below", "daily_EXOBGAPC_ugL_1")] <- NA
+  }
+  
+  if(assimilation_expt == "FP_EXO_2"){
+    obs[,c("CTDChla_ugL_above", "CTDChla_ugL", "CTDChla_ugL_below")] <- NA
   }
   
   if(assimilation_expt == "FP_CTD"){
-    obs[,c("CTDChla_ugL_above", "CTDChla_ugL", "CTDChla_ugL_below")] <- NA
+    obs[,c("daily_EXOChla_ugL_1", "daily_EXOBGAPC_ugL_1")] <- NA
   }
   
   if(missing_data_expt == TRUE){
@@ -68,9 +67,10 @@ get_obs_df <- function(obs_file = "./1_Data_wrangling/collated_obs_data.csv",
   
 }
 
-obs_df <- get_obs_df(obs_file = "./1_Data_wrangling/collated_obs_data.csv",
-                     assimilation_expt = "all",
-                     missing_data_expt = FALSE)
+# obs_df <- get_obs_df(obs_file = "./1_Data_wrangling/collated_obs_data.csv",
+#                      assimilation_expt = "all",
+#                      missing_data_expt = FALSE)
+
 
 ##' turn observation dataframe into matrix ----
 #'
@@ -110,49 +110,47 @@ get_obs_matrix = function(obs_df = obs_df,
   return(obs_matrix)
 }
 
-obs <- get_obs_matrix(obs_df = obs_df, 
-                      model_dates = model_dates, 
-                      n_step = length(model_dates), 
-                      n_states = 4, 
-                      states = c("GreenAlgae_ugL",
-                                 "Bluegreens_ugL",
-                                 "BrownAlgae_ugL",
-                                 "MixedAlgae_ugL"))
-
-ancillary_obs <- get_obs_matrix(obs_df = obs_df, 
-                                model_dates = model_dates, 
-                                n_step = length(model_dates), 
-                                n_states = 5, 
-                                states = c("daily_EXOChla_ugL_1",
-                                           "daily_EXOBGAPC_ugL_1",
-                                           "CTDChla_ugL_above",
-                                           "CTDChla_ugL",
-                                           "CTDChla_ugL_below"))
-
-
+# obs <- get_obs_matrix(obs_df = obs_df, 
+#                       model_dates = model_dates, 
+#                       n_step = length(model_dates), 
+#                       n_states = 4, 
+#                       states = c("GreenAlgae_ugL",
+#                                  "Bluegreens_ugL",
+#                                  "BrownAlgae_ugL",
+#                                  "MixedAlgae_ugL"))
+# 
+# ancillary_obs <- get_obs_matrix(obs_df = obs_df, 
+#                       model_dates = model_dates, 
+#                       n_step = length(model_dates), 
+#                       n_states = 5, 
+#                       states = c("daily_EXOChla_ugL_1","daily_EXOBGAPC_ugL_1","CTDChla_ugL_above","CTDChla_ugL","CTDChla_ugL_below"))
 
 ##' observation error matrix, should be a square matrix where ----
 #'   col & row = the number of states and params for which you have observations
 #'
 #' @param n_states number of states we're updating in data assimilation routine
-#' @param n_param_obs number of parameters for which we have observations
+#' @param n_params_obs number of parameters for which we have observations
 #' @param n_step number of model timesteps
-#' @param FP_sd vector of state observation standard deviation; assuming sd is constant through time; in our case sd of FP observations on log scale
-#' @param param_sd vector of parameter observation standard deviation; assuming sd is constant through time
-#' @param EXO_sd vector of standard deviations of EXO model predictions for each state
-#' @param CTD_sd vector of standard deviations of CTD model predictions for each state
-#' @param EXO_CTD_sd vector of standard deviations of EXO + CTD model predictions for each state
+#' @param FP_var vector of state observation standard deviation; assuming sd is constant through time; in our case sd of FP observations on log scale
+#' @param param_var vector of parameter observation standard deviation; assuming sd is constant through time
+#' @param EXO_1_var vector of standard deviations of EXO model predictions for each state
+#' @param EXO_2_var vector of standard deviations of EXO model predictions for each state
+#' @param CTD_var vector of standard deviations of CTD model predictions for each state
+#' @param EXO_CTD_var vector of standard deviations of EXO + CTD model predictions for each state
+#' @param obs obs matrix
+#' @param ancillary_obs ancillary obs matrix
 
 get_obs_error_matrix = function(n_states = 4, 
                                 n_params_obs = 0, 
                                 n_step = length(model_dates), 
-                                FP_var = c(0.009,0.01,0.04,0.90), #remember log scale; estimated this using var(log(rnorm(1000,x,0.5))),
-                                #where x is the mean of each PG from 2014-2020; for green algae x = 5.6, for bluegreens x = 4.8, 
-                                #for brown algae x = 2.7, for mixed algae x = 0.74 ugL; had to use var(log(abs(rnorm(1000,0.74,0.5)))) for mixed algae due to negative values
+                                FP_var = c(0.007,0.012,0.02,0.93), #estimated assuming obs error of 0.5 ug/L, e.g., var(log(rnorm(1000,x,0.5))) where x is mean of biomass for a PG
                                 param_var = NULL,
-                                EXO_var = c(1.5,7.7,6.3,19.5), #see 2B_DA_model_selection.R for calculation of these for each model
-                                CTD_var = c(1.8,19.4,8.5,20.8),
-                                EXO_CTD_var = c(0.3,4.3,7.2,18.9)){
+                                EXO_1_var = c(1.5,14.5,6.7,20.8), #see 2B_DA_model_selection.R for calculation of these for each model
+                                EXO_2_var = c(1.5,7.7,6.3,19.5),
+                                CTD_var = c(1.8,19.3,8.7,20.7),
+                                EXO_CTD_var = c(0.3,4.3,7.7,17.9),
+                                obs = obs,
+                                ancillary_obs = ancillary_obs){
   
   R = array(0, dim = c(n_states + n_params_obs, n_states + n_params_obs, n_step))
   
@@ -164,7 +162,11 @@ get_obs_error_matrix = function(n_states = 4,
         if(all(is.na(ancillary_obs[c(1:2),,t]))){
           state_var[[t]] = CTD_var
         } else if(all(is.na(ancillary_obs[c(3:5),,t]))){
-          state_var[[t]] = EXO_var
+          if(is.na(ancillary_obs[2,,t])){
+            state_var[[t]] = EXO_1_var
+          } else{
+            state_var[[t]] = EXO_2_var
+          }
         } else {
           state_var[[t]] = EXO_CTD_var
         }
@@ -191,16 +193,17 @@ get_obs_error_matrix = function(n_states = 4,
   return(R)
 }
 
-R <- get_obs_error_matrix(n_states = 4, 
-                          n_params_obs = 0, 
-                          n_step = length(model_dates), 
-                          FP_var = c(0.009,0.01,0.04,0.90), #remember log scale; estimated this using var(log(rnorm(1000,x,0.5))),
-                          #where x is the mean of each PG from 2014-2020; for green algae x = 5.6, for bluegreens x = 4.8, 
-                          #for brown algae x = 2.7, for mixed algae x = 0.74 ugL; had to use var(log(abs(rnorm(1000,0.74,0.5)))) for mixed algae due to negative values
-                          param_var = NULL,
-                          EXO_var = c(1.5,7.7,6.3,19.5), #see 2B_DA_model_selection.R for calculation of these for each model
-                          CTD_var = c(1.8,19.4,8.5,20.8),
-                          EXO_CTD_var = c(0.3,4.3,7.2,18.9))                                    
+# R <- get_obs_error_matrix(n_states = 4, 
+#                           n_params_obs = 0, 
+#                           n_step = length(model_dates), 
+#                           FP_var = c(0.007,0.012,0.02,0.93), #estimated assuming obs error of 0.5 ug/L, e.g., var(log(rnorm(1000,x,0.5))) where x is mean of biomass for a PG
+#                           param_var = NULL,
+#                           EXO_1_var = c(1.5,14.5,6.7,20.8), #see 2B_DA_model_selection.R for calculation of these for each model
+#                           EXO_2_var = c(1.5,7.7,6.3,19.5),
+#                           CTD_var = c(1.8,19.3,8.7,20.7),
+#                           EXO_CTD_var = c(0.3,4.3,7.7,17.9),
+#                           obs = obs,
+#                           ancillary_obs = ancillary_obs)
 
 ## ' Measurement operator matrix saying 1 if there is observation data available, 0 otherwise ----
 #' for this project we need to tweak according to which data we are assimilating
@@ -217,7 +220,7 @@ R <- get_obs_error_matrix(n_states = 4,
 #' @param assimilation_expt choose from c("FP","FP_EXO","FP_CTD","all")
 get_obs_id_matrix = function(n_states = 4, 
                              n_params_obs = 0, 
-                             n_params_est = 2, 
+                             n_params_est = 0, 
                              n_step = length(model_dates), 
                              obs = obs,
                              ancillary_obs = ancillary_obs,
@@ -233,7 +236,17 @@ get_obs_id_matrix = function(n_states = 4,
   }
   }
   
-  if(assimilation_expt == "FP_EXO"){
+  if(assimilation_expt == "FP_EXO_1"){
+    for(t in 1:n_step){
+      if(all(is.na(ancillary_obs[1,,t]))){
+        H[1:(n_states + n_params_obs), 1:(n_states + n_params_obs), t] = diag(ifelse(is.na(obs[,,t]),0, 1), n_states + n_params_obs, n_states + n_params_obs)
+      } else {
+        H[1:(n_states + n_params_obs), 1:(n_states + n_params_obs), t] = diag(1, n_states + n_params_obs, n_states + n_params_obs)
+      }
+    }
+  }
+  
+  if(assimilation_expt == "FP_EXO_2"){
     for(t in 1:n_step){
       if(all(is.na(ancillary_obs[c(1:2),,t]))){
         H[1:(n_states + n_params_obs), 1:(n_states + n_params_obs), t] = diag(ifelse(is.na(obs[,,t]),0, 1), n_states + n_params_obs, n_states + n_params_obs)
@@ -266,13 +279,13 @@ get_obs_id_matrix = function(n_states = 4,
   return(H)
 }
 
-H <- get_obs_id_matrix(n_states = 4, 
-                       n_params_obs = 0, 
-                       n_params_est = 2, 
-                       n_step = length(model_dates), 
-                       obs = obs,
-                       ancillary_obs = ancillary_obs,
-                       assimilation_expt = "all")
+# H <- get_obs_id_matrix(n_states = 4, 
+#                        n_params_obs = 0, 
+#                        n_params_est = 0, 
+#                        n_step = length(model_dates), 
+#                        obs = obs,
+#                        ancillary_obs = ancillary_obs,
+#                        assimilation_expt = "all")
 
 ##' vector for holding states and parameters for updating ----
 #'
@@ -281,19 +294,19 @@ H <- get_obs_id_matrix(n_states = 4,
 #' @param n_step number of model timesteps
 #' @param n_en number of ensembles
 get_Y_vector = function(n_states = 4, 
-                        n_params_est = 2, 
+                        n_params_est = 0, 
                         n_step = length(model_dates), 
-                        n_en = 30){
+                        n_en = 100){
   
   Y = array(dim = c(n_states + n_params_est, n_step, n_en))
   
   return(Y)
 }
 
-Y <- get_Y_vector(n_states = 4, 
-                  n_params_est = 2, 
-                  n_step = length(model_dates), 
-                  n_en = 30)
+# Y <- get_Y_vector(n_states = 4, 
+#                   n_params_est = 0, 
+#                   n_step = length(model_dates), 
+#                   n_en = 100)
 
 ####' initialize Y vector with draws from distribution of obs ----
 #' for our project, this will only be happening on 2021-01-01
@@ -304,48 +317,48 @@ Y <- get_Y_vector(n_states = 4,
 #' @param obs observation matrix
 #' @param init_params initial values for estimated parameters (lambda.min and lambda.1se from glmnet output)
 #' @param init_states values at which you'd like to initialize states
-#' @param n_states_est number of states being estimated
+#' @param n_states number of states being estimated
 #' @param n_params_est number of parameters being estimated
 #' @param n_params_obs number of parameters being observed
 #' @param n_step number of model timesteps
-initialize_Y = function(Y = Y, 
-                        init_params = c(0.35,1.07), 
-                        init_states = c(6.15,2.26,1.93,3.60),
-                        n_states_est = 4, 
-                        n_params_est = 2, 
-                        n_params_obs = 0, 
-                        n_step = length(model_dates), 
-                        n_en = 30, 
-                        state_sd = rep(0.5,4), 
-                        param_sd = c(0.05,0.05)){
-  
-  temp = array(dim = c(n_states_est + n_params_est, 1, n_en))
-  
-  temp[c(1:n_states_est),,] = array(log(rnorm(n = n_en * (n_states_est),
-                                   mean = c(init_states),
-                                   sd = c(state_sd))),
-                         dim = c(c(n_states_est), n_en))
-  temp[c((n_states_est+1):(n_states_est + n_params_est)),,] = array(rnorm(n = n_en * (n_params_est),
-                                   mean = c(init_params),
-                                   sd = c(param_sd)),
-                         dim = c(c(n_params_est), n_en))
-  
-  
-  Y[ , 1, ] = temp
-  
-  return(Y)
-}
+# initialize_Y = function(Y = Y, 
+#                         init_params = c(0.35,1.07), 
+#                         init_states = c(6.15,2.26,1.93,3.60),
+#                         n_states = 4, 
+#                         n_params_est = 2, 
+#                         n_params_obs = 0, 
+#                         n_step = length(model_dates), 
+#                         n_en = 30, 
+#                         state_sd = rep(0.5,4), 
+#                         param_sd = c(0.05,0.05)){
+#   
+#   temp = array(dim = c(n_states + n_params_est, 1, n_en))
+#   
+#   temp[c(1:n_states),,] = array(log(rnorm(n = n_en * (n_states),
+#                                    mean = c(init_states),
+#                                    sd = c(state_sd))),
+#                          dim = c(c(n_states), n_en))
+#   temp[c((n_states+1):(n_states + n_params_est)),,] = array(rnorm(n = n_en * (n_params_est),
+#                                    mean = c(init_params),
+#                                    sd = c(param_sd)),
+#                          dim = c(c(n_params_est), n_en))
+#   
+#   
+#   Y[ , 1, ] = temp
+#   
+#   return(Y)
+# }
 
-Y <- initialize_Y(Y = Y, 
-                  init_params = c(0.35,1.07), 
-                  init_states = c(6.15,2.26,1.93,3.60),
-                  n_states_est = 4, 
-                  n_params_est = 2, 
-                  n_params_obs = 0, 
-                  n_step = length(model_dates), 
-                  n_en = 30, 
-                  state_sd = rep(0.5,4), 
-                  param_sd = c(0.05,0.05))
+# Y <- initialize_Y(Y = Y, 
+#                   init_params = c(0.35,1.07), 
+#                   init_states = c(6.15,2.26,1.93,3.60),
+#                   n_states = 4, 
+#                   n_params_est = 2, 
+#                   n_params_obs = 0, 
+#                   n_step = length(model_dates), 
+#                   n_en = 30, 
+#                   state_sd = rep(0.5,4), 
+#                   param_sd = c(0.05,0.05))
 
 ##' Kalman filter function ----
 ##' @param Y vector for holding states and parameters you're estimating
@@ -393,16 +406,14 @@ kalman_filter = function(Y, R, obs, H, n_en, cur_step){
 #' green algae, cyanobacteria, brown algae, and mixed algae in that order that you will use
 #' to initialize the lag term if start_of_run == TRUE
 #' @param sd_obs standard deviation of FP observations
-#' @param fp_prev previous day's forecast of FP groups as matrix? dataframe?
-#' with 
 #' @param n_en number of ensemble members (will only work up to 30 due to NOAA)
 #' @param forecast_horizon how many days into the future do you want to forecast? (max of 16 due to FLARE)
 
 collate_driver_forecasts <- function(issue_date = model_dates[i],
                                      start_of_run = TRUE,
-                                     ic_lag = c(6.15,2.26,1.93,3.60),
+                                     ic_lag = c(2,0.0001,3,0.0001), #based on obs on 2021-04-26
                                      sd_obs = 0.5,
-                                     n_en = 30,
+                                     n_en = 100,
                                      forecast_horizon = 10){
 
 
@@ -410,7 +421,16 @@ collate_driver_forecasts <- function(issue_date = model_dates[i],
 fc_dates <- get_model_dates(model_start = issue_date, model_stop = (as.Date(issue_date) + forecast_horizon), time_step = 'days') 
 
 #assign rows to pull from for FLARE ensemble
-erow <- sample.int(100, n_en)
+if(n_en > 100){
+  erow <- sample.int(100,n_en,replace = TRUE)
+} else{
+  erow <- sample.int(100, n_en)
+}
+if(n_en > 30){
+  wrow <- sample.int(30,n_en,replace = TRUE)
+} else{
+  wrow <- sample.int(30, n_en)
+}
 
 #'read in NOAA fc for start date
 #'air_temperature = deg C
@@ -421,31 +441,52 @@ erow <- sample.int(100, n_en)
 #'wind_speed = m/s
 
 noaa <- read_csv(file.path(paste0("./00_Data_files/formatted_noaa/met_",issue_date,".csv"))) %>%
-  filter(fc_date %in% fc_dates) %>%
+  filter(fc_date %in% fc_dates & ensemble_member %in% wrow) %>%
   select(-issue_date,-air_pressure,-cloud_area_fraction,-specific_humidity) %>%
-  mutate(precipitation_flux = precipitation_flux*60*60*24,#to convert to mm/day
+  mutate(precipitation_flux = log(precipitation_flux*60*60*24+0.0001),#to convert to mm/day and log-transform
          relative_humidity = relative_humidity*100) #to convert to percent
+new_noaa <- data.frame(fc_date = rep(fc_dates,times = n_en),
+                       ensemble_member = rep(wrow,each = length(fc_dates)),
+                       new_ensemble_member = rep(1:n_en, each = length(fc_dates)))
+final_noaa <- left_join(new_noaa,noaa,by = c("fc_date","ensemble_member")) %>%
+  select(-ensemble_member) %>%
+  rename(ensemble_member = new_ensemble_member)
 
 #read in inf fc for start date
 inf <- read_csv(file.path(paste0("./00_Data_files/discharge_forecasts/inflow_",issue_date,".csv"))) %>%
-  filter(fc_date %in% fc_dates) %>%
-  select(-issue_date)
+  filter(fc_date %in% fc_dates & ensemble_member %in% wrow) %>%
+  select(-issue_date) 
+new_inf <- data.frame(fc_date = rep(fc_dates,times = n_en),
+                       ensemble_member = rep(wrow,each = length(fc_dates)),
+                       new_ensemble_member = rep(1:n_en, each = length(fc_dates)))
+final_inf <- left_join(new_inf,inf,by = c("fc_date","ensemble_member")) %>%
+  select(-ensemble_member) %>%
+  mutate(FLOW = log(FLOW + 0.0001)) %>%
+  rename(ensemble_member = new_ensemble_member)
 
 #read in FLARE fc for start date
 wt <- read_csv(file.path(paste0("./00_Data_files/FLARE_forecasts/wt_",issue_date,".csv"))) %>%
   filter(fc_date %in% fc_dates & ensemble_member %in% erow) %>%
   select(-issue_date) 
-wt$ensemble_member <- rep(1:n_en,each = length(fc_dates))
+new_wt <- data.frame(fc_date = rep(fc_dates,times = n_en),
+                      ensemble_member = rep(erow,each = length(fc_dates)),
+                      new_ensemble_member = rep(1:n_en, each = length(fc_dates)))
+final_wt <- left_join(new_wt,wt,by = c("fc_date","ensemble_member")) %>%
+  select(-ensemble_member) %>%
+  rename(ensemble_member = new_ensemble_member)
 
 #specify data frame for lagged FP observations depending on whether this is
 #the first forecast run or not
 if(start_of_run == TRUE){
-  fp <- data.frame("GreenAlgae_ugL_lag" = rnorm(n_en,ic_lag[1],sd_obs),
-                   "Bluegreens_ugL_lag" = rnorm(n_en,ic_lag[2],sd_obs),
-                   "BrownAlgae_ugL_lag" = rnorm(n_en,ic_lag[3],sd_obs),
-                   "MixedAlgae_ugL_lag" = rnorm(n_en,ic_lag[4],sd_obs),
+  fp <- data.frame("GreenAlgae_ugL_lag" = abs(rnorm(n_en,ic_lag[1],sd_obs)),
+                   "Bluegreens_ugL_lag" = abs(rnorm(n_en,ic_lag[2],sd_obs)),
+                   "BrownAlgae_ugL_lag" = abs(rnorm(n_en,ic_lag[3],sd_obs)),
+                   "MixedAlgae_ugL_lag" = abs(rnorm(n_en,ic_lag[4],sd_obs)),
                    "ensemble_member" = rep(c(1:n_en),times = length(fc_dates)),
                    "fc_date" = rep(fc_dates, each = n_en))
+  for(c in 1:(ncol(fp)-2)){
+    fp[,c] <- log(fp[,c]+0.0001)
+  }
 } else {
   fp <- data.frame("GreenAlgae_ugL_lag" = rep(NA, n_en),
                    "Bluegreens_ugL_lag" = rep(NA, n_en),
@@ -455,8 +496,8 @@ if(start_of_run == TRUE){
                    "fc_date" = rep(fc_dates, each = n_en))
 }
 
-drivers <- left_join(noaa, inf, by = c("fc_date","ensemble_member")) %>%
-  left_join(wt, by = c("fc_date","ensemble_member")) %>%
+drivers <- left_join(final_noaa, final_inf, by = c("fc_date","ensemble_member")) %>%
+  left_join(final_wt, by = c("fc_date","ensemble_member")) %>%
   left_join(fp, by = c("fc_date","ensemble_member")) %>%
   rename(daily_AirTemp_C = air_temperature,
          daily_RH_percent = relative_humidity,
@@ -466,26 +507,19 @@ drivers <- left_join(noaa, inf, by = c("fc_date","ensemble_member")) %>%
          daily_InfraredRadiationDown_Average_W_m2 = surface_downwelling_longwave_flux_in_air,
          Flow_cms = FLOW,
          date = fc_date)
-drivers <- drivers[,c(1,10,2,4,3,7,6,5,9,11:14,8)] #making sure driver cols are in same order as expected by 'predict' function based on model selection script
-
-log_vars <- read_csv("./2_Model_selection/logged_vars.csv")
-
-for(i in 1:ncol(drivers)){
-  if(colnames(drivers)[i] %in% log_vars$log_vars){
-    drivers[,i] <- log(drivers[,i]+0.0001)
-  }
-}
+drivers <- drivers[,c(1,10,3,5,4,8,7,6,9,11:14,2)] #making sure driver cols are in same order as expected by 'predict' function based on model selection script
 
 fc_conv <- drivers
 return(fc_conv)
+
 }
 
-fc_conv <- collate_driver_forecasts(issue_date = model_dates[i],
-                                    start_of_run = TRUE,
-                                    ic_lag = c(6.15,2.26,1.93,3.60),
-                                    sd_obs = 0.5,
-                                    n_en = 30,
-                                    forecast_horizon = 10)
+# fc_conv <- collate_driver_forecasts(issue_date = model_dates[i],
+#                                     start_of_run = TRUE,
+#                                     ic_lag = c(2,0.0001,3,0.0001), #based on obs on 2021-04-26
+#                                     sd_obs = 0.5,
+#                                     n_en = 100,
+#                                     forecast_horizon = 10)
 #### Function to create driver data matrix ----
 
 #' matrix for holding driver data
@@ -500,7 +534,7 @@ get_drivers = function(fc_conv = fc_conv,
                        n_drivers = 12, 
                        driver_colnames = colnames(fc_conv)[2:13], 
                        issue_date = model_dates[i], 
-                       n_en = 30,
+                       n_en = 100,
                        forecast_horizon = 10){
   
   #assign days for which you are making a forecast
@@ -519,12 +553,12 @@ get_drivers = function(fc_conv = fc_conv,
   return(drivers_out) 
 }
 
-forecast_drivers <- get_drivers(fc_conv = fc_conv, 
-                       n_drivers = 12, 
-                       driver_colnames = colnames(fc_conv)[2:13], 
-                       issue_date = model_dates[i], 
-                       n_en = 30,
-                       forecast_horizon = 10)
+# forecast_drivers <- get_drivers(fc_conv = fc_conv,
+#                        n_drivers = 12,
+#                        driver_colnames = colnames(fc_conv)[2:13],
+#                        issue_date = model_dates[i],
+#                        n_en = 100,
+#                        forecast_horizon = 10)
 
 ####Function to aggregate driver ensembles for all forecast issue dates----
 #' @param model_dates vector of dates for which you'd like to produce forecasts
@@ -538,9 +572,9 @@ forecast_drivers <- get_drivers(fc_conv = fc_conv,
 #' @param driver_colnames column names of the drivers in the driver dataframe 
 #' BEST ESTIMATE THIS WILL TAKE ~15 MINUTES TO RUN
 get_driver_list <- function(model_dates = model_dates,
-                            n_en = 30,
+                            n_en = 100,
                             forecast_horizon = 10,
-                            ic_lag = c(6.15,2.26,1.93,3.60),
+                            ic_lag = c(2,0.0001,3,0.0001),
                             sd_obs = 0.5,
                             n_drivers = 12,
                             driver_colnames = c("Temp_C",                                   
@@ -586,7 +620,7 @@ get_driver_list <- function(model_dates = model_dates,
       date_last_file_found <- model_dates[i]
       
       
-    } else{ #so this is the case where a NOAA forecast is missing
+    } else{ #so this is the case where a driver forecast is missing
       
       missing_data_forecast_horizon = 16
       
@@ -619,65 +653,93 @@ get_driver_list <- function(model_dates = model_dates,
   
 } #end of function
 
-driver_list <- get_driver_list(model_dates = model_dates,
-                               n_en = 30,
-                               forecast_horizon = 10,
-                               ic_lag = c(6.15,2.26,1.93,3.60),
-                               sd_obs = 0.5,
-                               n_drivers = 12,
-                               driver_colnames = c("Temp_C",                                   
-                                                   "daily_AirTemp_C",                          
-                                                   "daily_RH_percent",                         
-                                                   "daily_Rain_Total_mm" ,                     
-                                                   "daily_WindSpeed_Average_m_s" ,             
-                                                   "daily_ShortwaveRadiationDown_Average_W_m2",
-                                                   "daily_InfraredRadiationDown_Average_W_m2", 
-                                                   "Flow_cms" ,                                
-                                                   "GreenAlgae_ugL_lag"  ,                     
-                                                   "Bluegreens_ugL_lag"  ,                     
-                                                   "BrownAlgae_ugL_lag" ,                      
-                                                   "MixedAlgae_ugL_lag"))
+# driver_list <- get_driver_list(model_dates = model_dates,
+#                                n_en = 100,
+#                                forecast_horizon = 10,
+#                                ic_lag = c(2,0.0001,3,0.0001),
+#                                sd_obs = 0.5,
+#                                n_drivers = 12,
+#                                driver_colnames = c("Temp_C",
+#                                                    "daily_AirTemp_C",
+#                                                    "daily_RH_percent",
+#                                                    "daily_Rain_Total_mm" ,
+#                                                    "daily_WindSpeed_Average_m_s" ,
+#                                                    "daily_ShortwaveRadiationDown_Average_W_m2",
+#                                                    "daily_InfraredRadiationDown_Average_W_m2",
+#                                                    "Flow_cms" ,
+#                                                    "GreenAlgae_ugL_lag"  ,
+#                                                    "Bluegreens_ugL_lag"  ,
+#                                                    "BrownAlgae_ugL_lag" ,
+#                                                    "MixedAlgae_ugL_lag"))
+# 
+# saveRDS(driver_list, file = file.path(paste0("./4_Data_assimilation/driver_list.RData")))
 
 ####Function to run glmnet model ----
 #' This function needs to:
 #' 1. read in model file
-#' 2. use driver and various draws from a runif bounded by lambda.min and lambda.1se
-#' to generate a forecast with a horizon of 10 days
+#' 2. use drivers 
+#' to generate a forecast with a horizon of 10 days w/ proc error
 #' 
-#' Notes: lambda.min and lambda.1se will be tuned so need to remember to re-populate them
-#' This will need to be looped b/c there are 30 ensemble members for each element of driver_list
-#' and 'predict' can't handle that; will need to have a loop of n_en
-#' @param lambda.min lambda.min from glmnet output
-#' @param lambda.1se lambda.1se from glmnet output
 #' @param model cv.glmnet object
 #' @param drivers array of driver data; dim = c(forecast_horizon, n_drivers, n_en)
 #' @param n_en number of ensemble members
-#' 
-model <- readRDS("./2_Model_selection/fit_1.RData")
+#' @param forecast_horizon forecast horizon in days
+#' @param n_states = 4
+#' @param resid_matrix matrix of residuals to calculate sigma for proc error
 
-predict_phytos <- function(lambda.min = 0.35,
-                           lambda.1se = 1.07,
-                           model = model,
+# #new version with mlm
+# model <- readRDS("./2_Model_selection/forecast_fit.RData")
+# resid_matrix <- read_csv("./4_Data_assimilation/resid_matrix.csv")
+
+
+predict_phytos <- function(model = model,
                            drivers = driver_list[[i]],
-                           n_en = 30,
+                           n_en = 100,
                            forecast_horizon = 10,
-                           n_states = 4){
+                           n_states = 4,
+                           resid_matrix = resid_matrix){
   
   y <- array(dim = c((forecast_horizon+1),n_states,n_en))
   
-  lambda <- runif(n_en,lambda.min,lambda.1se)
+  sigma <- cov(resid_matrix)
   
-  for(n in 1:n_en){
-    y[,,n] <- predict(model, s = lambda[n], drivers[,,n])
+  for(d in 1:(forecast_horizon+1)){
+    for(n in 1:n_en){
+    
+    x = data.frame(Temp_C = unlist(drivers[d,1,n]),
+                   daily_AirTemp_C = unlist(drivers[d,2,n]),
+                   daily_RH_percent = unlist(drivers[d,3,n]),
+                   daily_Rain_Total_mm = unlist(drivers[d,4,n]),
+                   daily_WindSpeed_Average_m_s = unlist(drivers[d,5,n]),
+                   daily_ShortwaveRadiationDown_Average_W_m2 = unlist(drivers[d,6,n]),
+                   daily_InfraredRadiationDown_Average_W_m2 = unlist(drivers[d,7,n]),
+                   Flow_cms = unlist(drivers[d,8,n]),
+                   GreenAlgae_ugL_lag = unlist(drivers[d,9,n]),
+                   Bluegreens_ugL_lag = unlist(drivers[d,10,n]),
+                   BrownAlgae_ugL_lag = unlist(drivers[d,11,n]),
+                   MixedAlgae_ugL_lag= unlist(drivers[d,12,n]))
+    
+    preds <- predict(model,x)
+    y[d,,n] <- rmvnorm(1,matrix(preds),sigma)
+    
+    }
+    
+    if(d != 11){
+      drivers[d+1,c(9:12),] <- y[d,,]
+    }
+    
   }
   
-  return(list(y = y, lambda = lambda)) #come back to this and make sure y is in the right format to be plugged into drivers
+  return(list(y = y)) #come back to this and make sure y is in the right format to be plugged into drivers
   
 }
 
-driver_list[[2]][,c(9:12),] <- y #do we want to do this AFTER we've updated with obs from today or no?
-#need to think about indexing here more; we can update first lag with today's data
-#to run tmrw's forecast but how to update for the +2,+3...etc. day forecasts?
+# pred <- predict_phytos(model = model,
+#                        drivers = driver_list[[i]],
+#                        n_en = 100,
+#                        forecast_horizon = 10,
+#                        n_states = 4,
+#                        resid_matrix = resid_matrix)
 
 ##Function to populate obs with predictions from DA models----
 #' This function needs to:
@@ -687,36 +749,42 @@ driver_list[[2]][,c(9:12),] <- y #do we want to do this AFTER we've updated with
 #' obs uncertainty and is included in the obs variance matrix
 #' The format needs to be inputtable to the obs matrix
 #' 
-#' @param x matrix of ancillary observations available for today
-#' @param EXO.model lm object using EXO to predict FP
+#' @param predictors matrix of ancillary observations available for today
+#' @param EXO1.model lm object using EXO chla to predict FP
+#' @param EXO2.model lm object using EXO to predict FP
 #' @param CTD.model lm object using CTD to predict FP
 #' @param EXO.CTD.model lm object using EXO and CTD to predict FP
 #' 
 
-EXO.model <- readRDS("./2_Model_selection/lm_EXO.RData")
-CTD.model <- readRDS("./2_Model_selection/lm_EXO.RData")
-EXO.CTD.model <- readRDS("./2_Model_selection/lm_EXO.RData")
 
 predict_FP_obs <- function(predictors = ancillary_obs[,,t],
-                           EXO.model = EXO.model,
+                           EXO1.model = EXO1.model,
+                           EXO2.model = EXO2.model,
                            CTD.model = CTD.model,
                            EXO.CTD.model = EXO.CTD.model){
   
   if(all(is.na(predictors[c(1:2)]))){
     
-    x = data.frame(CTD_chla_ugL_above = unlist(predictors[3]), CTD_chla_ugL = unlist(predictors[4]), CTD_chla_ugL_below = unlist(predictors[5]))
+    x = data.frame(CTDChla_ugL_above = unlist(predictors[3]), CTDChla_ugL = unlist(predictors[4]), CTDChla_ugL_below = unlist(predictors[5]))
     
     FP.pred <- predict(CTD.model,x)
     
   } else if(all(is.na(predictors[c(3:5)]))){
     
+    if(is.na(predictors[2])){
+      x = data.frame(daily_EXOChla_ugL_1 = unlist(predictors[1]))
+      
+      FP.pred <- predict(EXO1.model,x)
+    } else {
+    
     x = data.frame(daily_EXOChla_ugL_1 = unlist(predictors[1]), daily_EXOBGAPC_ugL_1 = unlist(predictors[2]))
     
-    FP.pred <- predict(EXO.model,x) 
+    FP.pred <- predict(EXO2.model,x) 
+    }
     
   } else {
     
-    x = data.frame(CTD_chla_ugL_above = unlist(predictors[3]), CTD_chla_ugL = unlist(predictors[4]), CTD_chla_ugL_below = unlist(predictors[5]), daily_EXOChla_ugL_1 = unlist(predictors[1]), daily_EXOBGAPC_ugL_1 = unlist(predictors[2]))
+    x = data.frame(CTDChla_ugL_above = unlist(predictors[3]), CTDChla_ugL = unlist(predictors[4]), CTDChla_ugL_below = unlist(predictors[5]), daily_EXOChla_ugL_1 = unlist(predictors[1]), daily_EXOBGAPC_ugL_1 = unlist(predictors[2]))
     
     FP.pred <- predict(EXO.CTD.model,x)
   }
@@ -725,149 +793,288 @@ predict_FP_obs <- function(predictors = ancillary_obs[,,t],
   
 }
 
-obs[,,t] <- FP.pred #will populate obs with these predictions
-
+# EXO1.model <- readRDS("./2_Model_selection/lm_EXO_1.RData")
+# EXO2.model <- readRDS("./2_Model_selection/lm_EXO_2.RData")
+# CTD.model <- readRDS("./2_Model_selection/lm_CTD.RData")
+# EXO.CTD.model <- readRDS("./2_Model_selection/lm_EXO_CTD.RData")
+# 
+# FP.pred <- predict_FP_obs(predictors = ancillary_obs[,,t],
+#                           EXO1.model = EXO1.model,
+#                           EXO2.model = EXO2.model,
+#                           CTD.model = CTD.model,
+#                           EXO.CTD.model = EXO.CTD.model)
 
 ##' wrapper for running EnKF ----
+#' For this project, we want to generate a 10-day hindcast, so for example on Jan. 1,
+#' we are generating a hindcast for Jan. 1-11, which gets us 10 days in the future.
 #' 
-#' @param n_en number of model ensembles 
-#' @param start start date of model run 
-#' @param stop date of model run
-#' @param time_step model time step, defaults to days 
-#' @param obs_file observation file 
-#' @param driver_file driver data file 
-#' @param n_states_est number of states we're estimating 
-#' @param n_params_est number of parameters we're estimating 
-#' @param n_params_obs number of parameters for which we have observations 
-#' @param decay_init initial decay rate of DOC 
-#' @param obs_cv coefficient of variation of observations 
-#' @param param_cv coefficient of variation of parameters 
-#' @param driver_cv coefficient of variation of driver data for DOC Load, Discharge out, and Lake volume, respectively 
-#' @param init_cond_cv initial condition CV (what we're )
-EnKF = function(n_en = 30, 
-                start = "2021-01-01",
-                stop = "2021-01-17", 
-                time_step = 'days', 
+#' For BOTH IC and the lag term on Jan. 1, we are using draws from a distribution
+#' based around the last observation in Dec. 2020.
+#' 
+#' AFTER we generate the Jan. 1 forecast, we update the prediction for Jan. 1
+#' with any available observations using the Kalman filter, and use that to
+#' populate the lag for Jan. 2. 
+#' 
+#' To break that down in a little more detail:
+#' 1. Generate hindcast (where you are working with t as today)
+#' 2. Write hindcast to file
+#' 3. Query for observations in obs and ancillary_obs
+#'  a. if find FP obs, run Kalman filter
+#'  b. if find no FP obs but DO find ancillary_obs
+#'    i. determine which ancillary data model to apply (run predict_FP_obs function)
+#'    ii. insert those predicted FP obs into obs matrix
+#'    iii. run Kalman filter
+#'  c. if find no FP obs but DO find ancillary_obs, do nothing
+#' 4. Populate the drivers[[i+1]] with either forecast corrected with "obs" or just forecast
+#' 
+#' So now that I think through this...
+#' I don't think we need to "initialize Y" b/c it'll get populated on day 1
+#' given the way I'm gonna write the function
+#' Actually, Y is not that helpful to us except for tracking the parameters 
+#' anyways, because we'll be writing each forecast to file.
+#' 
+#' The test here will be 2 days in June which have NO data of any kind.
+#' In this case, we would just write the prediction for "today" to tmrw's 
+#' file w/ no updating. I think Y might be a good place to store predictions
+#' post-update b/c then we can retrieve those easily?? not sure
+#' 
+#' @param model_start first forecast issue date
+#' @param model_stop last forecast issue date
+#' @param time_step time step of forecast; in theory could vary but honestly
+#' will probably bonk if set to anything but 'days'
+#' @param obs_file file of lake observations
+#' @param assimilation_expt choose from c("FP","FP_EXO","FP_CTD","all");
+#' determines which data streams to include
+#' @param missing_data_expt aspirational; doesn't have any functionality yet;
+#' should be set to FALSE
+#' @param n_states_est number of FP states (4 for 4 PGs)
+#' @param n_ancillary_data_streams number of ancillary data streams that are assimilated (5
+#' for EXO and CTD above and below and at depth of EXO)
+#' @param states_est character vector of column names for states
+#' @param ancillary_data_streams character vector of column names for ancillary data streams
+#' @param n_params_obs number of parameters for which we have observations
+#' @param FP_var vector of variances for each FP group
+#' @param param_var vector of variances for each estimated parameter
+#' @param EXO_var vector of residual variances for EXO model predictions of FP
+#' @param CTD_var vector of residual variances for CTD model predictions of FP
+#' @param EXO_CTD_var vector of residual variances for EXO + CTD model predictions of FP
+#' @param n_params_est number of parameters being estimated
+#' @param n_en number of ensemble members
+#' @param ic_lag vector of values with which to initialize lag term
+#' @param sd_obs vector of standard deviations with which to initialize lag term
+#' @param forecast_horizon forecast horizon in days
+#' @param n_drivers number of drivers in forecast model
+#' @param driver_colnames vector of column names for forecast model driver variables
+#' @param init_lambda.min vector of values to initialize lambda.min, equal in length to n_en
+#' @param init_lambda.1se vector of values to initialize lambda.1se, equal in length to n_en
+#' @param model RData object containing forecast model, in this case a cv.glmnet object
+#' @param EXO.model RData object containing DA model to convert EXO obs to FP, in this case an lm object
+#' @param CTD.model RData object containing DA model to convert CTD obs to FP, in this case an lm object
+#' @param EXO.CTD.model RData object containing DA model to convert EXO + CTD obs to FP, in this case an lm object
+#' @param resid_matrix matrix to initialize sigma (process error covariance matrix)
+
+resid_matrix <- read_csv("./4_Data_assimilation/resid_matrix.csv")
+model <- readRDS("./2_Model_selection/forecast_fit.RData")
+EXO1.model <- readRDS("./2_Model_selection/lm_EXO_1.RData")
+EXO2.model <- readRDS("./2_Model_selection/lm_EXO_2.RData")
+CTD.model <- readRDS("./2_Model_selection/lm_CTD.RData")
+EXO.CTD.model <- readRDS("./2_Model_selection/lm_EXO_CTD.RData")
+
+EnKF = function(model_start = "2021-04-27",
+                model_stop = "2021-11-09",
+                time_step = 'days',
                 obs_file = "./1_Data_wrangling/collated_obs_data.csv",
-                driver_file = 'A_EcoForecast/Data/lake_c_data.rds',
-                n_states_est = 1, 
-                n_params_est = 1,
-                n_params_obs = 0, 
-                decay_init = 0.005, 
-                obs_cv = 0.1,
-                param_cv = 0.25,
-                driver_cv = c(0.2, 0.2, 0.2),
-                init_cond_cv = 0.1){
+                assimilation_expt = "all",
+                missing_data_expt = FALSE,
+                n_states_est = 4,
+                n_ancillary_data_streams = 5,
+                states_est = c("GreenAlgae_ugL","Bluegreens_ugL","BrownAlgae_ugL","MixedAlgae_ugL"),
+                ancillary_data_streams = c("daily_EXOChla_ugL_1","daily_EXOBGAPC_ugL_1","CTDChla_ugL_above","CTDChla_ugL","CTDChla_ugL_below"),
+                n_params_obs = 0,
+                FP_var = c(0.007,0.012,0.02,0.93), #estimated assuming obs error of 0.5 ug/L, e.g., var(log(rnorm(1000,x,0.5))) where x is mean of biomass for a PG
+                param_var = NULL,
+                EXO_1_var = c(1.5,14.5,6.7,20.8), #see 2B_DA_model_selection.R for calculation of these for each model
+                EXO_2_var = c(1.5,7.7,6.3,19.5),
+                CTD_var = c(1.8,19.3,8.7,20.7),
+                EXO_CTD_var = c(0.3,4.3,7.7,17.9),
+                n_params_est = 0,
+                n_en = 100,
+                ic_lag = c(2,0.0001,3,0.0001),
+                sd_obs = 0.5,
+                forecast_horizon = 10,
+                n_drivers = 12,
+                driver_colnames = c("Temp_C",
+                                    "daily_AirTemp_C",
+                                    "daily_RH_percent",
+                                    "daily_Rain_Total_mm" ,
+                                    "daily_WindSpeed_Average_m_s" ,
+                                    "daily_ShortwaveRadiationDown_Average_W_m2",
+                                    "daily_InfraredRadiationDown_Average_W_m2",
+                                    "Flow_cms" ,
+                                    "GreenAlgae_ugL_lag"  ,
+                                    "Bluegreens_ugL_lag"  ,
+                                    "BrownAlgae_ugL_lag" ,
+                                    "MixedAlgae_ugL_lag"),
+                model = model,
+                EXO1.model = EXO1.model,
+                EXO2.model = EXO2.model,
+                CTD.model = CTD.model,
+                EXO.CTD.model = EXO.CTD.model,
+                hindcast_output_folder = "./4_Data_assimilation/hindcasts/all/",
+                resid_matrix = resid_matrix){
   
+  #get vector of forecast issue dates
+  model_dates <- get_model_dates(model_start = model_start,
+                                 model_stop = model_stop,
+                                 time_step = time_step)
+  #set number of model timesteps
+  n_step = length(model_dates)
   
-  n_en = n_en
-  start = as.Date(start)
-  stop = as.Date(stop)
-  time_step = 'days' 
-  dates = get_model_dates(model_start = start, model_stop = stop, time_step = time_step)
-  n_step = length(dates)
+  #get observation dataframe
+  obs_df <- get_obs_df(obs_file = "./1_Data_wrangling/collated_obs_data.csv",
+                       assimilation_expt = assimilation_expt,
+                       missing_data_expt = missing_data_expt)
   
-  # get observation matrix
-  obs_df = readRDS(obs_file) %>% 
-    select(datetime, doc_lake) 
-  
-  drivers_df = readRDS(driver_file) %>% 
-    select(datetime, doc_load, water_out, lake_vol) 
-  
-  n_states_est = n_states_est # number of states we're estimating 
-  
-  n_params_est = n_params_est # number of parameters we're calibrating
-  
-  n_params_obs = n_params_obs # number of parameters for which we have observations
-  
-  decay_init = decay_init # Initial estimate of DOC decay rate day^-1 
-  
-  doc_init = obs_df$doc_lake[min(which(!is.na(obs_df$doc_lake)))]
-  
-  state_cv = obs_cv #coefficient of variation of DOC observations 
-  state_sd = state_cv * doc_init
-  init_cond_sd = init_cond_cv * doc_init
-  
-  param_cv = param_cv #coefficient of variation of DOC decay 
-  param_sd = param_cv * decay_init
-  
-  # driver data coefficient of variation for DOC Load, Discharge out, and Lake volume, respectively 
-  driver_cv = driver_cv 
-  
-  
-  # setting up matrices
-  # observations as matrix
-  obs = get_obs_matrix(obs_df = obs_df,
-                       model_dates = dates,
-                       n_step = n_step,
-                       n_states = n_states_est)
-  
-  # Y vector for storing state / param estimates and updates
-  Y = get_Y_vector(n_states = n_states_est,
-                   n_params_est = n_params_est,
-                   n_step = n_step,
-                   n_en = n_en)
-  
-  # observation error matrix
-  R = get_obs_error_matrix(n_states = n_states_est,
-                           n_params_obs = n_params_obs,
-                           n_step = n_step,
-                           state_sd = state_sd,
-                           param_sd = param_sd)
-  
-  # observation identity matrix
-  H = get_obs_id_matrix(n_states = n_states_est,
-                        n_params_obs = n_params_obs,
-                        n_params_est = n_params_est,
+  #get observation matrix and ancillary observation matrix
+  obs <- get_obs_matrix(obs_df = obs_df,
+                        model_dates = model_dates,
                         n_step = n_step,
-                        obs = obs)
+                        n_states = n_states_est,
+                        states = states_est)
   
-  # initialize Y vector
-  Y = initialize_Y(Y = Y, obs = obs, init_params = decay_init, n_states_est = n_states_est,
-                   n_params_est = n_params_est, n_params_obs = n_params_obs,
-                   n_step = n_step, n_en = n_en, state_sd = init_cond_sd, param_sd = param_sd)
+  ancillary_obs <- get_obs_matrix(obs_df = obs_df,
+                                  model_dates = model_dates,
+                                  n_step = n_step,
+                                  n_states = n_ancillary_data_streams,
+                                  states = ancillary_data_streams)
   
-  # get driver data with uncertainty - dim = c(n_step, driver, n_en) 
-  drivers = get_drivers(drivers_df = drivers_df, 
-                        model_dates = dates,
-                        n_drivers = 3, 
-                        driver_colnames = c('doc_load', 'water_out', 'lake_vol'), 
-                        driver_cv = driver_cv, 
-                        n_step = n_step, 
-                        n_en = n_en) 
+  #get observation error matrix
+  R <- get_obs_error_matrix(n_states = n_states_est,
+                            n_params_obs = n_params_obs,
+                            n_step = n_step,
+                            FP_var = FP_var,
+                            param_var = param_var,
+                            EXO_1_var = EXO_1_var,
+                            EXO_2_var = EXO_2_var,
+                            CTD_var = CTD_var,
+                            EXO_CTD_var = EXO_CTD_var,
+                            obs = obs,
+                            ancillary_obs = ancillary_obs)
+  
+  #get observation id matrix
+  H <- get_obs_id_matrix(n_states = n_states_est,
+                         n_params_obs = n_params_obs,
+                         n_params_est = n_params_est,
+                         n_step = n_step,
+                         obs = obs,
+                         ancillary_obs = ancillary_obs,
+                         assimilation_expt = assimilation_expt)
+  
+  #get Y vector
+  Y <- get_Y_vector(n_states = n_states_est,
+                    n_params_est = n_params_est,
+                    n_step = n_step,
+                    n_en = n_en)
+  
+  #read in drivers
+  driver_list <- readRDS("./4_Data_assimilation/driver_list.RData")
   
   # start modeling
-  # remember will need to build in functionality here to populate each forecast's driver data
-  # with the previous day's forecast of FP groups
-  for(t in 2:n_step){
-    for(n in 1:n_en){
+  for(t in 1:n_step){
+    
+    #' 1. Generate hindcast (where you are working with t as today)
+      pred <- predict_phytos(model = model,
+                             drivers = driver_list[[t]],
+                             n_en = n_en,
+                             forecast_horizon = forecast_horizon,
+                             n_states = n_states_est,
+                             resid_matrix = resid_matrix)
       
-      # run model; 
-      model_output = predict_lake_doc(doc_load = drivers[t-1, 1, n], 
-                                      doc_lake = Y[1, t-1, n], 
-                                      lake_vol = drivers[t-1, 3, n], 
-                                      water_out = drivers[t-1, 2, n],
-                                      decay = Y[2, t-1, n])
-      #' so would need to have something here where the model_output is for many days ahead of time (forecast horizon)
-      #' but only the prediction for tmrw is stored in Y b/c that's what'll be used if no data is assimilated
-      #' the full model output should be written to file each time so have a forecast for each day
+      #store states and parameters in Y 
+      Y[1 , t,  ] = pred$y[1,1,] # store in Y vector
+      Y[2 , t,  ] = pred$y[1,2,]
+      Y[3 , t,  ] = pred$y[1,3,]
+      Y[4 , t,  ] = pred$y[1,4,]
       
-      Y[1 , t, n] = model_output$doc_predict # store in Y vector
-      Y[2 , t, n] = model_output$decay
-    }
-    # check if there are any observations to assimilate 
-    ##this is where you need to edit if you've got obs from 
-    ##ancillary sources to run the GLM and get predictions of FP
-    if(any(!is.na(obs[ , , t]))){
+    
+    #' 2. Write hindcast to file
+    
+    #assign issue_date
+    issue_date = model_dates[t]
+    #assign fc_dates
+    fc_dates <- get_model_dates(model_start = issue_date, model_stop = (as.Date(issue_date) + forecast_horizon), time_step = time_step) 
+    
+    #format hindcast
+    gr <- reshape2::melt(pred$y[,1,],varnames = c("fc_date","ensemble_member"), value.name = "GreenAlgae_ugL")
+    bg <- reshape2::melt(pred$y[,2,],varnames = c("fc_date","ensemble_member"), value.name = "Bluegreens_ugL")
+    br <- reshape2::melt(pred$y[,3,],varnames = c("fc_date","ensemble_member"), value.name = "BrownAlgae_ugL")
+    mx <- reshape2::melt(pred$y[,4,],varnames = c("fc_date","ensemble_member"), value.name = "MixedAlgae_ugL")
+    
+    formatted_pred <- left_join(gr,bg, by = c("fc_date","ensemble_member")) %>%
+      left_join(br, by = c("fc_date","ensemble_member")) %>%
+      left_join(mx, by = c("fc_date","ensemble_member"))
+    
+    formatted_pred$issue_date <- issue_date
+    formatted_pred$fc_date <- rep(fc_dates, times = n_en)
+    
+    #write to file
+    write.csv(formatted_pred,file = file.path(paste0(hindcast_output_folder,"phytos_",model_dates[t],".csv")),row.names = FALSE)
+    
+    #' 3. Query for observations in obs and ancillary_obs
+    #'  a. if find FP obs, run Kalman filter
+    #'  b. if find no FP obs but DO find ancillary_obs
+    #'    i. determine which ancillary data model to apply (run predict_FP_obs function)
+    #'    ii. insert those predicted FP obs into obs matrix
+    #'    iii. run Kalman filter
+    #'  c. if find no FP obs or ancillary_obs, do nothing
+    
+    if(any(!is.na(obs[ , , t]))){ #if there are FP obs
+      
+      #then apply kalman filter
       Y = kalman_filter(Y = Y,
                         R = R,
                         obs = obs,
                         H = H,
                         n_en = n_en,
                         cur_step = t) # updating params / states if obs available
+      
+    } else if(any(!is.na(ancillary_obs[ , , t]))){ #otherwise if there are ancillary obs
+      
+      #get predictions for FP using ancillary data
+      FP.pred <- predict_FP_obs(predictors = ancillary_obs[,,t],
+                                EXO1.model = EXO1.model,
+                                EXO2.model = EXO2.model,
+                                CTD.model = CTD.model,
+                                EXO.CTD.model = EXO.CTD.model)
+      
+      #put those predictions in the obs matrix
+      obs[, , t] <- FP.pred
+      
+      #then apply kalman filter
+      Y = kalman_filter(Y = Y,
+                        R = R,
+                        obs = obs,
+                        H = H,
+                        n_en = n_en,
+                        cur_step = t) # updating params / states if obs available
+      
     }
-  }
-  out = list(Y = Y, dates = dates, drivers = drivers, R = R, obs = obs, state_sd = state_sd)
+    
+    #' 4. Populate the drivers[[i+1]] with either forecast corrected with "obs" or just forecast
+    if(t != length(model_dates)){
+      
+      for(k in 1:(forecast_horizon+1)){ #I am certain there is a more efficient way to do this :-/
+        
+        driver_list[[t+1]][k ,c(9:12), ] <- Y[c(1:4), t, ]
+        
+      }
+    
+    }
+    
+  } #end of n_step loop
+  
+  #return output
+  out = list(Y = Y, dates = model_dates, drivers = driver_list, R = R, obs = obs)
   
   return(out)
 }
